@@ -31,6 +31,8 @@ class EncoderModel(nn.Module):
                  pooling: str = 'cls',
                  normalize: bool = False,
                  temperature: float = 1.0,
+                 loss_type: str = 'unsymmetric',
+                 dataset_type: str = 'passage_multiquery'
                  ):
         super().__init__()
         self.config = encoder.config
@@ -39,12 +41,19 @@ class EncoderModel(nn.Module):
         self.normalize = normalize
         self.temperature = temperature
         self.cross_entropy = nn.CrossEntropyLoss(reduction='mean')
+        self.bin_cross_entropy = nn.BCEWithLogitsLoss(reduction='mean')
+        self.loss_type = loss_type
+        self.dataset_type = dataset_type
         self.is_ddp = dist.is_initialized()
         if self.is_ddp:
             self.process_rank = dist.get_rank()
             self.world_size = dist.get_world_size()
 
-    def forward(self, query: Dict[str, Tensor] = None, passage: Dict[str, Tensor] = None):
+    def forward(self, 
+                query: Dict[str, Tensor] = None, 
+                passage: Dict[str, Tensor] = None, 
+                query_passage_target: Tensor = None, 
+                passage_query_target: Tensor = None) -> EncoderOutput:
         q_reps = self.encode_query(query) if query else None
         p_reps = self.encode_passage(passage) if passage else None
 
@@ -61,13 +70,26 @@ class EncoderModel(nn.Module):
                 q_reps = self._dist_gather_tensor(q_reps)
                 p_reps = self._dist_gather_tensor(p_reps)
 
-            scores = self.compute_similarity(q_reps, p_reps)
-            scores = scores.view(q_reps.size(0), -1)
+            if self.dataset_type == 'passage_multiquery':
+                # import ipdb; ipdb.set_trace()
+                scores = self.compute_similarity(q_reps, p_reps)
+                query_to_passage_loss = self.cross_entropy(scores/ self.temperature, query_passage_target)
+                passage_to_query_loss = self.bin_cross_entropy(scores.T/ self.temperature, passage_query_target.to(scores.dtype))
+                loss = (query_to_passage_loss + passage_to_query_loss) / 2
+            else:
+                scores = self.compute_similarity(q_reps, p_reps)
+                scores = scores.view(q_reps.size(0), -1)
 
-            target = torch.arange(scores.size(0), device=scores.device, dtype=torch.long)
-            target = target * (p_reps.size(0) // q_reps.size(0))
+                target = torch.arange(scores.size(0), device=scores.device, dtype=torch.long)
+                target = target * (p_reps.size(0) // q_reps.size(0))
 
-            loss = self.compute_loss(scores / self.temperature, target)
+                loss = self.compute_loss(scores / self.temperature, target)
+                if self.loss_type == 'symmetric':
+                    scores_t = scores.transpose(0, 1)
+                    target_t = torch.arange(scores.size(1), device=scores.device, dtype=torch.long)
+                    target_t = target_t * (q_reps.size(0) // p_reps.size(0))
+                    loss += self.compute_loss(scores_t / self.temperature, target_t)
+                    loss /= 2
             if self.is_ddp:
                 loss = loss * self.world_size  # counter average weight reduction
         # for eval
@@ -147,7 +169,8 @@ class EncoderModel(nn.Module):
                 encoder=base_model,
                 pooling=model_args.pooling,
                 normalize=model_args.normalize,
-                temperature=model_args.temperature
+                temperature=model_args.temperature,
+                loss_type=model_args.loss_type
             )
         return model
 

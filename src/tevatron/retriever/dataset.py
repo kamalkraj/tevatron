@@ -1,7 +1,7 @@
 import random
 from typing import List, Tuple
 
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from torch.utils.data import Dataset
 
 
@@ -21,13 +21,14 @@ def format_passage(text: str, title: str = '', prefix: str = '') -> str:
 class TrainDataset(Dataset):
     def __init__(self, data_args: DataArguments, trainer = None):
         self.data_args = data_args
-        self.train_data = load_dataset(
-            self.data_args.dataset_name,
-            self.data_args.dataset_config,
-            data_files=self.data_args.dataset_path,
-            split=self.data_args.dataset_split,
-            cache_dir=self.data_args.dataset_cache_dir,
-        )
+        # self.train_data = load_dataset(
+        #     self.data_args.dataset_name,
+        #     self.data_args.dataset_config,
+        #     data_files=self.data_args.dataset_path,
+        #     split=self.data_args.dataset_split,
+        #     cache_dir=self.data_args.dataset_cache_dir,
+        # )
+        self.train_data = load_dataset("json", data_files=self.data_args.dataset_path,split=self.data_args.dataset_split)
         if self.data_args.dataset_number_of_shards > 1:
             self.encode_data = self.encode_data.shard(
                 num_shards=self.data_args.dataset_number_of_shards,
@@ -40,42 +41,50 @@ class TrainDataset(Dataset):
 
     def __getitem__(self, item) -> Tuple[str, List[str]]:
         group = self.train_data[item]
-        epoch = int(self.trainer.state.epoch)
+        if self.data_args.dataset_type == "passage_multiquery":
+            context = group['context']
+            questions = group['questions']
 
-        _hashed_seed = hash(item + self.trainer.args.seed)
-
-        query = group['query']
-        group_positives = group['positive_passages']
-        group_negatives = group['negative_passages']
-
-        formated_query = format_query(query, self.data_args.query_prefix)
-        formated_passages = []
-
-        if self.data_args.positive_passage_no_shuffle:
-            pos_psg = group_positives[0]
+            formated_context = format_passage(context, "title", self.data_args.passage_prefix)
+            formated_questions = [format_query(q, self.data_args.query_prefix) for q in questions]
+            return formated_questions, formated_context
         else:
-            pos_psg = group_positives[(_hashed_seed + epoch) % len(group_positives)]
-        
-        formated_passages.append(format_passage(pos_psg['text'], pos_psg['title'], self.data_args.passage_prefix))
+            epoch = int(self.trainer.state.epoch)
 
-        negative_size = self.data_args.train_group_size - 1
-        if len(group_negatives) < negative_size:
-            negs = random.choices(group_negatives, k=negative_size)
-        elif self.data_args.train_group_size == 1:
-            negs = []
-        elif self.data_args.negative_passage_no_shuffle:
-            negs = group_negatives[:negative_size]
-        else:
-            _offset = epoch * negative_size % len(group_negatives)
-            negs = [x for x in group_negatives]
-            random.Random(_hashed_seed).shuffle(negs)
-            negs = negs * 2
-            negs = negs[_offset: _offset + negative_size]
+            _hashed_seed = hash(item + self.trainer.args.seed)
 
-        for neg_psg in negs:
-            formated_passages.append(format_passage(neg_psg['text'], neg_psg['title'], self.data_args.passage_prefix))
+            query = group['query']
+            group_positives = group['positive_passages']
+            group_negatives = group['negative_passages']
 
-        return formated_query, formated_passages
+            formated_query = format_query(query, self.data_args.query_prefix)
+            formated_passages = []
+
+            if self.data_args.positive_passage_no_shuffle:
+                pos_psg = group_positives[0]
+            else:
+                pos_psg = group_positives[(_hashed_seed + epoch) % len(group_positives)]
+            
+            formated_passages.append(format_passage(pos_psg['text'], pos_psg['title'], self.data_args.passage_prefix))
+
+            negative_size = self.data_args.train_group_size - 1
+            if len(group_negatives) < negative_size:
+                negs = random.choices(group_negatives, k=negative_size)
+            elif self.data_args.train_group_size == 1:
+                negs = []
+            elif self.data_args.negative_passage_no_shuffle:
+                negs = group_negatives[:negative_size]
+            else:
+                _offset = epoch * negative_size % len(group_negatives)
+                negs = [x for x in group_negatives]
+                random.Random(_hashed_seed).shuffle(negs)
+                negs = negs * 2
+                negs = negs[_offset: _offset + negative_size]
+
+            for neg_psg in negs:
+                formated_passages.append(format_passage(neg_psg['text'], neg_psg['title'], self.data_args.passage_prefix))
+
+            return formated_query, formated_passages
 
 
 class EncodeDataset(Dataset):

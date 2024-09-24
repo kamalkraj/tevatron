@@ -27,6 +27,10 @@ class ModelArguments:
         default=False,
         metadata={"help": "normalize query and passage representations"}
     )
+    loss_type: str = field(
+        default='unsymmetric',
+        metadata={"help": "loss type"}
+    )
 
     temperature: float = field(
         default=1.0,
@@ -88,6 +92,10 @@ class DataArguments:
 
     dataset_split: str = field(
         default='train', metadata={"help": "dataset split"}
+    )
+
+    dataset_type: str = field(
+        default='passage_multiquery', metadata={"help": "dataset type"}
     )
 
     dataset_cache_dir: Optional[str] = field(

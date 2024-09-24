@@ -46,8 +46,8 @@ class TevatronTrainer(Trainer):
         torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
 
     def compute_loss(self, model, inputs):
-        query, passage = inputs
-        return model(query=query, passage=passage).loss
+        query, passage,qp_target, pq_target = inputs
+        return model(query=query, passage=passage, query_passage_target=qp_target, passage_query_target=pq_target).loss
 
     def training_step(self, *args):
         return super(TevatronTrainer, self).training_step(*args) / self._dist_loss_scale_factor
