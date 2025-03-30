@@ -4,6 +4,7 @@ from typing import Dict, Optional
 import torch
 import torch.distributed as dist
 from torch import nn, Tensor
+import torch.nn.functional as F
 
 from transformers import PreTrainedModel, AutoModel
 from peft import LoraConfig, TaskType, get_peft_model, PeftModel
@@ -22,6 +23,44 @@ class EncoderOutput(ModelOutput):
     loss: Optional[Tensor] = None
     scores: Optional[Tensor] = None
 
+
+def nt_bxent_loss(x, pos_indices, temperature):
+    assert len(x.size()) == 2
+
+    # Add indexes of the principal diagonal elements to pos_indices
+    pos_indices = torch.cat([
+        pos_indices,
+        torch.arange(x.size(0)).reshape(x.size(0), 1).expand(-1, 2).to(x.device),
+    ], dim=0)
+    
+    # Ground truth labels
+    target = torch.zeros(x.size(0), x.size(0)).to(x.device)
+    target[pos_indices[:,0], pos_indices[:,1]] = 1.0
+
+    # Cosine similarity
+    xcs = F.cosine_similarity(x[None,:,:], x[:,None,:], dim=-1)
+    # Set logit of diagonal element to "inf" signifying complete
+    # correlation. sigmoid(inf) = 1.0 so this will work out nicely
+    # when computing the Binary Cross Entropy Loss.
+    xcs[torch.eye(x.size(0)).bool().to(x.device)] = torch.finfo(torch.float16).max
+
+    # Standard binary cross entropy loss. We use binary_cross_entropy_with_logits() here and not
+    # binary_cross_entropy() because of https://github.com/pytorch/pytorch/issues/102894
+    # The method *_with_logits() uses the log-sum-exp-trick, which causes inf and -inf values
+    # to result in a NaN result.
+    loss = F.binary_cross_entropy_with_logits((xcs / temperature), target, reduction="none")
+
+    target_pos = target.bool()
+    target_neg = ~target_pos
+    
+    loss_pos = torch.zeros(x.size(0), x.size(0)).to(x.device).masked_scatter(target_pos, loss[target_pos])
+    loss_neg = torch.zeros(x.size(0), x.size(0)).to(x.device).masked_scatter(target_neg, loss[target_neg])
+    loss_pos = loss_pos.sum(dim=1)
+    loss_neg = loss_neg.sum(dim=1)
+    num_pos = target.sum(dim=1)
+    num_neg = x.size(0) - num_pos
+
+    return ((loss_pos / num_pos) + (loss_neg / num_neg)).mean()
 
 class EncoderModel(nn.Module):
     TRANSFORMER_CLS = AutoModel
@@ -71,11 +110,9 @@ class EncoderModel(nn.Module):
                 p_reps = self._dist_gather_tensor(p_reps)
 
             if self.dataset_type == 'passage_multiquery':
-                # import ipdb; ipdb.set_trace()
-                scores = self.compute_similarity(q_reps, p_reps)
-                query_to_passage_loss = self.cross_entropy(scores/ self.temperature, query_passage_target)
-                passage_to_query_loss = self.bin_cross_entropy(scores.T/ self.temperature, passage_query_target.to(scores.dtype))
-                loss = (query_to_passage_loss + passage_to_query_loss) / 2
+                q_and_p = torch.cat([q_reps, p_reps], dim=0)
+                loss = nt_bxent_loss(q_and_p, query_passage_target.to(q_and_p.device), self.temperature)
+                scores = None
             else:
                 scores = self.compute_similarity(q_reps, p_reps)
                 scores = scores.view(q_reps.size(0), -1)

@@ -73,22 +73,19 @@ class TrainCollator:
             return_tensors='pt',
         )
         if self.data_args.dataset_type == "passage_multiquery":
-            target = []
-            query_passage_target = []
-            # print(len(q_collated['input_ids']))
-            # print(len(d_collated['input_ids']))
-            # print(d_collated['input_ids'].shape)
-            # import ipdb;ipdb.set_trace()
-            no_of_queries = int(len(q_collated['input_ids'])/len(d_collated['input_ids']))
-            # print(no_of_queries)
-            for i in range(int(len(q_collated['input_ids'])/no_of_queries)):
-                for _ in range(no_of_queries):
-                    temp = [0] * len(d_collated['input_ids'])
-                    temp[i] = 1
-                    query_passage_target.append(i)
-                    target.append(temp)
-            query_passage_target = torch.tensor(query_passage_target)
-            passage_query_target = torch.tensor(target).transpose(0, 1)
+            pos_indices = []
+            no_of_queries = len(q_collated['input_ids'])
+            no_of_passages = len(d_collated['input_ids'])
+            no_of_queries_per_passage = no_of_queries // no_of_passages
+            
+            for passage_idx in range(no_of_passages):
+                for query_offset in range(no_of_queries_per_passage):
+                    query_idx = passage_idx * no_of_queries_per_passage + query_offset
+                    pos_indices.append((query_idx, no_of_queries + passage_idx))
+            
+
+            query_passage_target = torch.tensor(pos_indices, dtype=torch.long)
+            
         return q_collated, d_collated, query_passage_target, passage_query_target
 
 

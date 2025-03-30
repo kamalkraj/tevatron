@@ -1,8 +1,8 @@
 CUDA_VISIBLE_DEVICES=0 python -m tevatron.retriever.driver.train \
-  --output_dir model_msmarco_passage_multiquery \
+  --output_dir model_msmarco_passage_multiquery_nt_xent \
   --model_name_or_path bert-base-uncased \
   --save_steps 20000 \
-  --dataset_path /workspaces/tevatron/data/data.jsonl \
+  --dataset_path /home/tevatron/data/data.jsonl \
   --query_prefix "Query: " \
   --passage_prefix "Passage: " \
   --fp16 \
@@ -17,5 +17,5 @@ CUDA_VISIBLE_DEVICES=0 python -m tevatron.retriever.driver.train \
   --num_train_epochs 1 \
   --logging_steps 500 \
   --overwrite_output_dir \
-  --loss_type symmetric \
+  --loss_type unsymmetric \
   --dataset_type passage_multiquery

@@ -78,6 +78,7 @@ def main():
     collator = TrainCollator(data_args, tokenizer)
 
     trainer_cls = GCTrainer if training_args.grad_cache else Trainer
+
     trainer = trainer_cls(
         model=model,
         args=training_args,
