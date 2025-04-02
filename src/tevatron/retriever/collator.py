@@ -78,11 +78,19 @@ class TrainCollator:
             no_of_passages = len(d_collated['input_ids'])
             no_of_queries_per_passage = no_of_queries // no_of_passages
             
+            # for passage_idx in range(no_of_passages):
+            #     for query_offset in range(no_of_queries_per_passage):
+            #         query_idx = passage_idx * no_of_queries_per_passage + query_offset
+            #         pos_indices.append((query_idx, no_of_queries + passage_idx))
+
+            pos_indices_passages = list(range(no_of_passages))
+            pos_indices_queries = []
+            passage_label = 0
             for passage_idx in range(no_of_passages):
                 for query_offset in range(no_of_queries_per_passage):
-                    query_idx = passage_idx * no_of_queries_per_passage + query_offset
-                    pos_indices.append((query_idx, no_of_queries + passage_idx))
-            
+                    pos_indices_queries.append(passage_label)
+                passage_label += 1
+            pos_indices = pos_indices_queries + pos_indices_passages
 
             query_passage_target = torch.tensor(pos_indices, dtype=torch.long)
             

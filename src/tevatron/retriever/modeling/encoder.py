@@ -10,6 +10,7 @@ from transformers import PreTrainedModel, AutoModel
 from peft import LoraConfig, TaskType, get_peft_model, PeftModel
 
 from transformers.file_utils import ModelOutput
+from tevatron.retriever.modeling.supcon import MultiPosConLoss
 from tevatron.retriever.arguments import ModelArguments, TevatronTrainingArguments as TrainingArguments
 
 import logging
@@ -81,6 +82,7 @@ class EncoderModel(nn.Module):
         self.temperature = temperature
         self.cross_entropy = nn.CrossEntropyLoss(reduction='mean')
         self.bin_cross_entropy = nn.BCEWithLogitsLoss(reduction='mean')
+        self.multiposimilarity = MultiPosConLoss(temperature=temperature)
         self.loss_type = loss_type
         self.dataset_type = dataset_type
         self.is_ddp = dist.is_initialized()
@@ -111,7 +113,7 @@ class EncoderModel(nn.Module):
 
             if self.dataset_type == 'passage_multiquery':
                 q_and_p = torch.cat([q_reps, p_reps], dim=0)
-                loss = nt_bxent_loss(q_and_p, query_passage_target.to(q_and_p.device), self.temperature)
+                loss = self.multiposimilarity(q_and_p, query_passage_target)
                 scores = None
             else:
                 scores = self.compute_similarity(q_reps, p_reps)

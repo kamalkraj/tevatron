@@ -7,7 +7,7 @@ from datasets import load_dataset
 random.seed(42)
 
 # Load a model
-transformer = models.Transformer("model_msmarco_passage_multiquery")
+transformer = models.Transformer("model_msmarco_passage_multiquery_nt_xent")
 pooling = models.Pooling(transformer.get_word_embedding_dimension(),pooling_mode="cls")
 # norm = models.Normalize()
 model = SentenceTransformer(modules=[transformer, pooling])
